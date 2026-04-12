@@ -829,7 +829,15 @@ with tab_boq:
                     ws.write(ri, 1,  row["code"],             fn)
                     ws.write(ri, 2,  row["desc"],             fn)
                     ws.write(ri, 3,  row["sub"],              fn)
-                    ws.write(ri, 4,  int(row["dn"]) if row["dn"] > 0 else "-",  fn)
+                    # Attempt to safely convert the 'dn' value to a number
+try:
+    dn_val = float(row["dn"])
+    display_val = int(dn_val) if dn_val > 0 else "-"
+except (ValueError, TypeError):
+    # If the cell is empty, None, or contains text, default to the hyphen
+    display_val = "-"
+
+ws.write(ri, 4, display_val, fn)
                     ws.write(ri, 5,  row["line"],             fn)
                     ws.write(ri, 6,  "Nos",                   fn)
                     ws.write(ri, 7,  int(row["qty"]),         fn)
