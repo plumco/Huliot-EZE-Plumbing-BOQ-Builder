@@ -836,7 +836,6 @@ try:
 except (ValueError, TypeError):
     # If the cell is empty, None, or contains text, default to the hyphen
     display_val = "-"
-
 ws.write(ri, 4, display_val, fn)
                     ws.write(ri, 5,  row["line"],             fn)
                     ws.write(ri, 6,  "Nos",                   fn)
