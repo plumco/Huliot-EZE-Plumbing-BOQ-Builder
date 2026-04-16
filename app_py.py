@@ -432,44 +432,133 @@ def export_excel():
     boq = st.session_state.boq
     proj = st.session_state.proj or "Huliot"
 
-    # ── Full BOQ sheet ──
+    # ── Shared styles ──
+    hdr_fill  = PatternFill("solid", fgColor="0F172A")
+    hdr_font  = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+    hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=False)
+    alt_fill  = PatternFill("solid", fgColor="F8FAFC")
+    tot_fill  = PatternFill("solid", fgColor="1E3A5F")
+    tot_font  = Font(bold=True, color="FBBF24", name="Calibri", size=12)
+    sub_font  = Font(bold=True, name="Calibri", size=11)
+    thin      = Side(style="thin", color="E2E8F0")
+    border    = Border(bottom=Side(style="thin", color="E2E8F0"))
+
+    def write_header(ws, headers, widths, fill=hdr_fill):
+        for c, (h, w) in enumerate(zip(headers, widths), 1):
+            cell = ws.cell(1, c, h)
+            cell.font = hdr_font; cell.fill = fill
+            cell.alignment = hdr_align
+            ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
+        ws.row_dimensions[1].height = 22
+        ws.freeze_panes = "A2"
+
+    def align(ws, row, rights=(), centers=()):
+        for c in range(1, ws.max_column + 1):
+            cell = ws.cell(row, c)
+            if c in rights:   cell.alignment = Alignment(horizontal="right",  vertical="center")
+            elif c in centers: cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:              cell.alignment = Alignment(horizontal="left",   vertical="center")
+
+    # ══════════════════════════════════════════
+    # SHEET 1 — Full BOQ (Aggregated, All Shafts Combined)
+    # Same as the "All" tab in the app
+    # ══════════════════════════════════════════
     ws = wb.active
     ws.title = "Full BOQ"
     ws.sheet_view.showGridLines = False
 
-    hdr_fill = PatternFill("solid", fgColor="0F172A")
-    hdr_font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
-    hdr_align = Alignment(horizontal="center", vertical="center")
-    headers = ["Sr.No","Location","Item Code","Description","Type","DN","Unit","Qty","List Price","Disc%","Net Rate","Amount","Line"]
-    col_widths = [6, 12, 22, 42, 14, 6, 5, 6, 13, 7, 13, 13, 12]
+    agg_headers = ["Sr.No","Item Code","Description","Type","DN","Unit",
+                   "Total Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)","Shafts / Location","Line"]
+    agg_widths  = [6, 22, 42, 14, 6, 5, 9, 14, 7, 14, 14, 28, 12]
+    write_header(ws, agg_headers, agg_widths)
 
-    for c, (h, w) in enumerate(zip(headers, col_widths), 1):
-        cell = ws.cell(1, c, h)
-        cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
-        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
+    # Aggregate by item code (same logic as app "All" view)
+    agg = {}
+    for b in boq:
+        key = b["code"]
+        if key not in agg:
+            agg[key] = {**b, "qty": b["qty"], "shafts": [b.get("shaft","NA")]}
+        else:
+            agg[key]["qty"] += b["qty"]
+            sh = b.get("shaft","NA")
+            if sh not in agg[key]["shafts"]:
+                agg[key]["shafts"].append(sh)
 
-    ws.row_dimensions[1].height = 20
-    alt_fill = PatternFill("solid", fgColor="F8FAFC")
+    agg_rows = list(agg.values())
+    grand_total = sum(r["qty"] * net_rate(r) for r in agg_rows)
 
-    for i, b in enumerate(boq, 2):
-        nd = eff_disc(b); nr = net_rate(b); a = amt(b)
-        row = [i-1, b["shaft"], b["code"], b["desc"], b["sub"],
-               b["dn"] if b["dn"] else "-", "Nos", b["qty"],
-               b["price"], nd, round(nr, 2), round(a, 2), b["line"]]
-        for c, v in enumerate(row, 1):
+    for i, r in enumerate(agg_rows, 2):
+        nr = net_rate(r)
+        a  = round(r["qty"] * nr, 2)
+        shafts_str = ", ".join(sorted(r["shafts"]))
+        row_data = [
+            i-1, r["code"], r["desc"], r["sub"],
+            r["dn"] if r["dn"] else "-", "Nos",
+            r["qty"], r["price"], eff_disc(r),
+            round(nr,2), a, shafts_str, r["line"]
+        ]
+        for c, v in enumerate(row_data, 1):
             cell = ws.cell(i, c, v)
-            cell.alignment = Alignment(vertical="center", horizontal="right" if c in [9,10,11,12] else "center" if c in [1,6,7,8] else "left")
-            if i % 2 == 0:
-                cell.fill = alt_fill
+            cell.border = border
+        align(ws, i, rights=(8,10,11), centers=(1,5,6,7,9))
+        # Highlight total qty column
+        qty_cell = ws.cell(i, 7)
+        qty_cell.font = Font(bold=True, color="1D4ED8", name="Calibri", size=11)
+        # Shade shafts column light blue
+        sh_cell = ws.cell(i, 12)
+        sh_cell.fill = PatternFill("solid", fgColor="DBEAFE")
+        sh_cell.font = Font(color="1D4ED8", name="Calibri", size=9)
+        if i % 2 == 0:
+            for c in range(1, len(row_data)+1):
+                if c not in (7, 12):  # keep highlights on qty/shaft cols
+                    ws.cell(i, c).fill = alt_fill
 
-    # Grand total
-    gt_row = len(boq) + 2
-    ws.cell(gt_row, 4, "─── GRAND TOTAL ───").font = Font(bold=True, name="Calibri", size=11)
-    gt_cell = ws.cell(gt_row, 12, round(grand(), 2))
-    gt_cell.font = Font(bold=True, color="1D4ED8", name="Calibri", size=13)
+    # Grand total row
+    gt_row = len(agg_rows) + 2
+    ws.cell(gt_row, 3, "GRAND TOTAL — ALL SHAFTS COMBINED").font = Font(bold=True, name="Calibri", size=11, color="0F172A")
+    ws.cell(gt_row, 7, sum(r["qty"] for r in agg_rows)).font = Font(bold=True, color="1D4ED8", name="Calibri", size=12)
+    ws.cell(gt_row, 7).alignment = Alignment(horizontal="center")
+    gt_cell = ws.cell(gt_row, 11, round(grand_total, 2))
+    gt_cell.font = tot_font; gt_cell.fill = tot_fill
     gt_cell.alignment = Alignment(horizontal="right")
+    ws.cell(gt_row, 12, f"{len(boq)} entries across {len(set(b.get('shaft','NA') for b in boq))} locations").font = Font(italic=True, color="64748B", name="Calibri", size=9)
 
-    # ── Per-shaft sheets ──
+    # ══════════════════════════════════════════
+    # SHEET 2 — Detail BOQ (every entry, with shaft per row)
+    # ══════════════════════════════════════════
+    ws_det = wb.create_sheet("Detail BOQ")
+    ws_det.sheet_view.showGridLines = False
+    det_headers = ["Sr.No","Location","Item Code","Description","Type","DN","Unit",
+                   "Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)","Line"]
+    det_widths   = [6, 10, 22, 42, 14, 6, 5, 6, 14, 7, 14, 14, 12]
+    write_header(ws_det, det_headers, det_widths)
+
+    detail_total = 0
+    for i, b in enumerate(boq, 2):
+        nd = eff_disc(b); nr = net_rate(b); a = round(amt(b), 2); detail_total += a
+        fg_loc = "DBEAFE" if b.get("shaft","NA").startswith("SH") else "D1FAE5" if b.get("shaft","NA").startswith("K") else "F1F5F9"
+        row_data = [i-1, b.get("shaft","NA"), b["code"], b["desc"], b["sub"],
+                    b["dn"] if b["dn"] else "-", "Nos", b["qty"],
+                    b["price"], nd, round(nr,2), a, b["line"]]
+        for c, v in enumerate(row_data, 1):
+            cell = ws_det.cell(i, c, v)
+            cell.border = border
+        align(ws_det, i, rights=(9,11,12), centers=(1,6,7,8,10))
+        ws_det.cell(i, 2).fill = PatternFill("solid", fgColor=fg_loc)
+        ws_det.cell(i, 2).font = Font(bold=True, name="Calibri", size=10,
+                                       color="1D4ED8" if b.get("shaft","NA").startswith("SH") else "065F46" if b.get("shaft","NA").startswith("K") else "64748B")
+        if i % 2 == 0:
+            for c in range(1, len(row_data)+1):
+                if c != 2: ws_det.cell(i, c).fill = alt_fill
+
+    dt_row = len(boq) + 2
+    ws_det.cell(dt_row, 4, "GRAND TOTAL").font = Font(bold=True, name="Calibri", size=11)
+    gt2 = ws_det.cell(dt_row, 12, round(detail_total, 2))
+    gt2.font = tot_font; gt2.fill = tot_fill; gt2.alignment = Alignment(horizontal="right")
+
+    # ══════════════════════════════════════════
+    # Per-shaft sheets (unchanged logic, cleaner style)
+    # ══════════════════════════════════════════
     shaft_groups = {}
     for b in boq:
         sh = b.get("shaft", "NA")
@@ -478,34 +567,35 @@ def export_excel():
     for sh, items in sorted(shaft_groups.items()):
         ws2 = wb.create_sheet(sh[:31])
         ws2.sheet_view.showGridLines = False
-        fg = "1D4ED8" if sh.startswith("SH") else "065F46" if sh.startswith("K") else "475569"
-        sh_fill = PatternFill("solid", fgColor=fg)
-        sh_hdrs = ["Sr.No","Item Code","Description","Type","DN","Unit","Qty","List Price","Disc%","Net Rate","Amount"]
-        sh_widths = [6,22,42,14,6,5,6,13,7,13,13]
-        for c, (h, w) in enumerate(zip(sh_hdrs, sh_widths), 1):
-            cell = ws2.cell(1, c, h)
-            cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
-            cell.fill = sh_fill; cell.alignment = hdr_align
-            ws2.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
-        ws2.row_dimensions[1].height = 20
+        fg_hex = "1D4ED8" if sh.startswith("SH") else "065F46" if sh.startswith("K") else "475569"
+        sh_fill = PatternFill("solid", fgColor=fg_hex)
+        sh_hdrs = ["Sr.No","Item Code","Description","Type","DN","Unit",
+                   "Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)"]
+        sh_widths = [6,22,42,14,6,5,6,14,7,14,14]
+        write_header(ws2, sh_hdrs, sh_widths, fill=sh_fill)
 
         subtotal = 0
         for i, b in enumerate(items, 2):
-            nd = eff_disc(b); nr = net_rate(b); a = amt(b); subtotal += a
-            row = [i-1, b["code"], b["desc"], b["sub"],
-                   b["dn"] if b["dn"] else "-", "Nos",
-                   b["qty"], b["price"], nd, round(nr,2), round(a,2)]
-            for c, v in enumerate(row, 1):
-                cell = ws2.cell(i, c, v)
-                cell.alignment = Alignment(vertical="center", horizontal="right" if c in [8,9,10,11] else "center" if c in [1,5,6,7] else "left")
-                if i % 2 == 0:
-                    cell.fill = alt_fill
+            nd = eff_disc(b); nr = net_rate(b); a = round(amt(b),2); subtotal += a
+            row_data = [i-1, b["code"], b["desc"], b["sub"],
+                        b["dn"] if b["dn"] else "-", "Nos",
+                        b["qty"], b["price"], nd, round(nr,2), a]
+            for c, v in enumerate(row_data, 1):
+                cell = ws2.cell(i, c, v); cell.border = border
+            align(ws2, i, rights=(8,10,11), centers=(1,5,6,7,9))
+            if i % 2 == 0:
+                for c in range(1, len(row_data)+1):
+                    ws2.cell(i, c).fill = alt_fill
 
+        # Subtotal row
         sub_row = len(items) + 2
-        ws2.cell(sub_row, 3, f"─── SUBTOTAL {sh} ───").font = Font(bold=True, name="Calibri", size=11)
+        ws2.cell(sub_row, 3, f"SUBTOTAL — {sh}").font = sub_font
         st_cell = ws2.cell(sub_row, 11, round(subtotal, 2))
-        st_cell.font = Font(bold=True, color=fg, name="Calibri", size=13)
+        st_cell.font = Font(bold=True, color=fg_hex, name="Calibri", size=12)
+        st_cell.fill  = PatternFill("solid", fgColor="F8FAFC")
         st_cell.alignment = Alignment(horizontal="right")
+        ws2.cell(sub_row, 7, sum(b["qty"] for b in items)).font = Font(bold=True, color=fg_hex, name="Calibri", size=11)
+        ws2.cell(sub_row, 7).alignment = Alignment(horizontal="center")
 
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
