@@ -771,60 +771,130 @@ with tab_boq:
 
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-        # BOQ Table
-        display_boq = st.session_state.boq if st.session_state.boq_fsh=="ALL" else [b for b in st.session_state.boq if b.get("shaft","NA")==st.session_state.boq_fsh]
-        display_total = sum(amt(b) for b in display_boq)
+        # ── Build display data ──
+        if st.session_state.boq_fsh == "ALL":
+            # Aggregate same item codes across all shafts — combined qty, combined amount
+            agg = {}
+            for b in st.session_state.boq:
+                key = b["code"]
+                if key not in agg:
+                    agg[key] = {
+                        **b,
+                        "qty": b["qty"],
+                        "shafts": [b.get("shaft","NA")],   # track which shafts contribute
+                        "_ids": [b["_id"]],
+                    }
+                else:
+                    agg[key]["qty"] += b["qty"]
+                    sh = b.get("shaft","NA")
+                    if sh not in agg[key]["shafts"]:
+                        agg[key]["shafts"].append(sh)
+                    agg[key]["_ids"].append(b["_id"])
+            display_rows = list(agg.values())
+            is_all = True
+        else:
+            display_rows = [b for b in st.session_state.boq if b.get("shaft","NA")==st.session_state.boq_fsh]
+            is_all = False
 
-        # Table header
-        bh = st.columns([0.4, 1.2, 2.5, 4, 0.8, 1, 1.5, 0.8, 1.5, 1.8, 0.5])
-        for hdr, col in zip(["#","LOC","CODE","DESCRIPTION","DN","QTY","LIST PRICE","DISC%","NET RATE","AMOUNT","DEL"], bh):
-            col.markdown(f"<div style='font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;background:#F8FAFC;padding:6px 3px;border-bottom:2px solid #E2E8F0;text-align:center;'>{hdr}</div>", unsafe_allow_html=True)
+        display_total = sum(
+            r["qty"] * net_rate(r) for r in display_rows
+        )
 
-        for idx, b in enumerate(display_boq):
-            tc3, bc3, brd = sh_colors(b.get("shaft","NA"))
-            r = st.columns([0.4, 1.2, 2.5, 4, 0.8, 1, 1.5, 0.8, 1.5, 1.8, 0.5])
-            with r[0]:
-                st.markdown(f"<div style='text-align:center;color:#94A3B8;font-size:11px;padding:8px 0;'>{idx+1}</div>", unsafe_allow_html=True)
-            with r[1]:
-                new_sh = st.selectbox("sh", SH_CODES, index=SH_CODES.index(b.get("shaft","NA")),
-                                      label_visibility="collapsed", key=f"bsh_{b['_id']}",
-                                      format_func=lambda x: x)
-                if new_sh != b.get("shaft","NA"):
-                    b["shaft"] = new_sh; st.rerun()
-            with r[2]:
-                st.markdown(f"<div style='font-family:monospace;font-size:9px;color:#64748B;padding:8px 2px;'>{b['code']}</div>", unsafe_allow_html=True)
-            with r[3]:
-                st.markdown(f"<div style='font-weight:600;font-size:12px;color:#1E293B;padding:4px 2px;'>{b['desc']}<br><span style='font-size:10px;color:#94A3B8;'>{b['sub']}</span></div>", unsafe_allow_html=True)
-            with r[4]:
-                if b["dn"] > 0:
-                    dc = DN_COLORS.get(b["dn"],"#64748B")
-                    st.markdown(f"<div style='text-align:center;padding:8px 0;'><span style='background:{dc}18;color:{dc};padding:2px 6px;border-radius:8px;font-size:11px;font-weight:800;'>{b['dn']}</span></div>", unsafe_allow_html=True)
-            with r[5]:
-                new_qty = st.number_input("qty", min_value=1, value=b["qty"], step=1,
-                                          label_visibility="collapsed", key=f"bqty_{b['_id']}")
-                if new_qty != b["qty"]:
-                    b["qty"] = new_qty; st.rerun()
-            with r[6]:
-                st.markdown(f"<div style='text-align:right;font-size:12px;padding:8px 4px;color:#64748B;'>{fmt(b['price'])}</div>", unsafe_allow_html=True)
-            with r[7]:
-                new_disc = st.number_input("disc", min_value=0.0, max_value=100.0,
-                                           value=float(b["disc"]) if b["disc"] is not None else float(st.session_state.g_disc),
-                                           step=0.5, label_visibility="collapsed", key=f"bdisc_{b['_id']}")
-                if new_disc != (b["disc"] if b["disc"] is not None else st.session_state.g_disc):
-                    b["disc"] = new_disc; st.rerun()
-            with r[8]:
-                st.markdown(f"<div style='text-align:right;font-weight:700;color:#10B981;font-size:12px;padding:8px 4px;'>{fmt(net_rate(b))}</div>", unsafe_allow_html=True)
-            with r[9]:
-                st.markdown(f"<div style='text-align:right;font-weight:800;font-size:13px;color:#1E293B;padding:8px 4px;'>{fmt(amt(b))}</div>", unsafe_allow_html=True)
-            with r[10]:
-                if st.button("✕", key=f"del_{b['_id']}", use_container_width=True):
-                    st.session_state.boq = [x for x in st.session_state.boq if x["_id"]!=b["_id"]]; st.rerun()
+        # ── Table header ──
+        if is_all:
+            bh = st.columns([0.4, 2.5, 4, 0.8, 1.2, 1.5, 0.8, 1.5, 1.8, 2.0])
+            for hdr, col in zip(["#","CODE","DESCRIPTION","DN","TOTAL QTY","LIST PRICE","DISC%","NET RATE","AMOUNT","SHAFTS"], bh):
+                col.markdown(f"<div style='font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;background:#F8FAFC;padding:6px 3px;border-bottom:2px solid #E2E8F0;text-align:center;'>{hdr}</div>", unsafe_allow_html=True)
+        else:
+            bh = st.columns([0.4, 1.2, 2.5, 4, 0.8, 1, 1.5, 0.8, 1.5, 1.8, 0.5])
+            for hdr, col in zip(["#","LOC","CODE","DESCRIPTION","DN","QTY","LIST PRICE","DISC%","NET RATE","AMOUNT","DEL"], bh):
+                col.markdown(f"<div style='font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;background:#F8FAFC;padding:6px 3px;border-bottom:2px solid #E2E8F0;text-align:center;'>{hdr}</div>", unsafe_allow_html=True)
+
+        # ── Rows ──
+        for idx, row in enumerate(display_rows):
+            dc = DN_COLORS.get(row["dn"],"#64748B")
+            nr = net_rate(row)
+            total_amt = row["qty"] * nr
+
+            if is_all:
+                r = st.columns([0.4, 2.5, 4, 0.8, 1.2, 1.5, 0.8, 1.5, 1.8, 2.0])
+                with r[0]:
+                    st.markdown(f"<div style='text-align:center;color:#94A3B8;font-size:11px;padding:8px 0;'>{idx+1}</div>", unsafe_allow_html=True)
+                with r[1]:
+                    st.markdown(f"<div style='font-family:monospace;font-size:9px;color:#64748B;padding:8px 2px;'>{row['code']}</div>", unsafe_allow_html=True)
+                with r[2]:
+                    st.markdown(f"<div style='font-weight:600;font-size:12px;color:#1E293B;padding:4px 2px;'>{row['desc']}<br><span style='font-size:10px;color:#94A3B8;'>{row['sub']}</span></div>", unsafe_allow_html=True)
+                with r[3]:
+                    if row["dn"] > 0:
+                        st.markdown(f"<div style='text-align:center;padding:8px 0;'><span style='background:{dc}18;color:{dc};padding:2px 6px;border-radius:8px;font-size:11px;font-weight:800;'>{row['dn']}</span></div>", unsafe_allow_html=True)
+                with r[4]:
+                    # Show total qty — bold, highlighted
+                    st.markdown(f"<div style='text-align:center;padding:6px 2px;'><span style='background:#1D4ED820;color:#1D4ED8;padding:4px 10px;border-radius:8px;font-size:15px;font-weight:900;'>{row['qty']}</span></div>", unsafe_allow_html=True)
+                with r[5]:
+                    st.markdown(f"<div style='text-align:right;font-size:12px;padding:8px 4px;color:#64748B;'>{fmt(row['price'])}</div>", unsafe_allow_html=True)
+                with r[6]:
+                    st.markdown(f"<div style='text-align:center;font-size:12px;padding:8px 4px;color:#64748B;'>{eff_disc(row)}%</div>", unsafe_allow_html=True)
+                with r[7]:
+                    st.markdown(f"<div style='text-align:right;font-weight:700;color:#10B981;font-size:12px;padding:8px 4px;'>{fmt(nr)}</div>", unsafe_allow_html=True)
+                with r[8]:
+                    st.markdown(f"<div style='text-align:right;font-weight:800;font-size:13px;color:#1E293B;padding:8px 4px;'>{fmt(total_amt)}</div>", unsafe_allow_html=True)
+                with r[9]:
+                    # Show shaft badges
+                    shafts = row.get("shafts", [row.get("shaft","NA")])
+                    badges = ""
+                    for sh in sorted(shafts):
+                        tc_s, bc_s, _ = sh_colors(sh)
+                        badges += f"<span style='background:{bc_s};color:{tc_s};border:1px solid {tc_s}44;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:700;margin:1px;display:inline-block;'>{sh}</span>"
+                    st.markdown(f"<div style='padding:6px 2px;line-height:1.8;'>{badges}</div>", unsafe_allow_html=True)
+
+            else:
+                # Per-shaft detail view (unchanged)
+                b = row
+                r = st.columns([0.4, 1.2, 2.5, 4, 0.8, 1, 1.5, 0.8, 1.5, 1.8, 0.5])
+                with r[0]:
+                    st.markdown(f"<div style='text-align:center;color:#94A3B8;font-size:11px;padding:8px 0;'>{idx+1}</div>", unsafe_allow_html=True)
+                with r[1]:
+                    new_sh = st.selectbox("sh", SH_CODES, index=SH_CODES.index(b.get("shaft","NA")),
+                                          label_visibility="collapsed", key=f"bsh_{b['_id']}",
+                                          format_func=lambda x: x)
+                    if new_sh != b.get("shaft","NA"):
+                        b["shaft"] = new_sh; st.rerun()
+                with r[2]:
+                    st.markdown(f"<div style='font-family:monospace;font-size:9px;color:#64748B;padding:8px 2px;'>{b['code']}</div>", unsafe_allow_html=True)
+                with r[3]:
+                    st.markdown(f"<div style='font-weight:600;font-size:12px;color:#1E293B;padding:4px 2px;'>{b['desc']}<br><span style='font-size:10px;color:#94A3B8;'>{b['sub']}</span></div>", unsafe_allow_html=True)
+                with r[4]:
+                    if b["dn"] > 0:
+                        st.markdown(f"<div style='text-align:center;padding:8px 0;'><span style='background:{dc}18;color:{dc};padding:2px 6px;border-radius:8px;font-size:11px;font-weight:800;'>{b['dn']}</span></div>", unsafe_allow_html=True)
+                with r[5]:
+                    new_qty = st.number_input("qty", min_value=1, value=b["qty"], step=1,
+                                              label_visibility="collapsed", key=f"bqty_{b['_id']}")
+                    if new_qty != b["qty"]:
+                        b["qty"] = new_qty; st.rerun()
+                with r[6]:
+                    st.markdown(f"<div style='text-align:right;font-size:12px;padding:8px 4px;color:#64748B;'>{fmt(b['price'])}</div>", unsafe_allow_html=True)
+                with r[7]:
+                    new_disc = st.number_input("disc", min_value=0.0, max_value=100.0,
+                                               value=float(b["disc"]) if b["disc"] is not None else float(st.session_state.g_disc),
+                                               step=0.5, label_visibility="collapsed", key=f"bdisc_{b['_id']}")
+                    if new_disc != (b["disc"] if b["disc"] is not None else st.session_state.g_disc):
+                        b["disc"] = new_disc; st.rerun()
+                with r[8]:
+                    st.markdown(f"<div style='text-align:right;font-weight:700;color:#10B981;font-size:12px;padding:8px 4px;'>{fmt(net_rate(b))}</div>", unsafe_allow_html=True)
+                with r[9]:
+                    st.markdown(f"<div style='text-align:right;font-weight:800;font-size:13px;color:#1E293B;padding:8px 4px;'>{fmt(amt(b))}</div>", unsafe_allow_html=True)
+                with r[10]:
+                    if st.button("✕", key=f"del_{b['_id']}", use_container_width=True):
+                        st.session_state.boq = [x for x in st.session_state.boq if x["_id"]!=b["_id"]]; st.rerun()
+
             st.markdown("<hr style='margin:0;border:none;border-top:1px solid #F1F5F9;'>", unsafe_allow_html=True)
 
-        # Grand Total
-        lbl = f"GRAND TOTAL" if st.session_state.boq_fsh=="ALL" else f"TOTAL — {st.session_state.boq_fsh}"
-        st.markdown(f"""<div class="total-row" style="background:linear-gradient(90deg,#0F172A,#1E3A5F);color:white;padding:10px 14px;border-radius:0 0 10px 10px;display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
-        <span style="font-weight:700;font-size:14px;">{lbl}</span>
+        # ── Grand Total ──
+        lbl = "GRAND TOTAL — All Shafts Combined" if is_all else f"TOTAL — {st.session_state.boq_fsh}"
+        item_count = f"{len(st.session_state.boq)} entries across {len(set(b.get('shaft','NA') for b in st.session_state.boq))} locations" if is_all else f"{len(display_rows)} items"
+        st.markdown(f"""<div style="background:linear-gradient(90deg,#0F172A,#1E3A5F);color:white;padding:10px 14px;border-radius:0 0 10px 10px;display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+        <div><span style="font-weight:700;font-size:14px;">{lbl}</span><br>
+        <span style="font-size:11px;opacity:.6;">{item_count}</span></div>
         <span style="font-weight:900;font-size:20px;color:#FBBF24;">{fmt(display_total)}</span>
         </div>""", unsafe_allow_html=True)
         st.markdown("<div class='footer-note'>⚠ Prices ex-factory/depot · GST extra as applicable · W.E.F April 2026 · Excel export includes separate sheet per Shaft/Kitchen</div>", unsafe_allow_html=True)
