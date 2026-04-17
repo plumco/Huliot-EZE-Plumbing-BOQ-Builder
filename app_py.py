@@ -430,6 +430,7 @@ def sh_label(c):
 def export_excel():
     wb = openpyxl.Workbook()
     boq = st.session_state.boq
+    proj = st.session_state.proj or "Huliot"
 
     # ── Shared styles ──
     hdr_fill  = PatternFill("solid", fgColor="0F172A")
@@ -438,37 +439,40 @@ def export_excel():
     alt_fill  = PatternFill("solid", fgColor="F8FAFC")
     tot_fill  = PatternFill("solid", fgColor="1E3A5F")
     tot_font  = Font(bold=True, color="FBBF24", name="Calibri", size=12)
-    row_border = Border(bottom=Side(style="thin", color="E2E8F0"))
-    num_fmt_inr = '₹#,##0.00'
-    num_fmt_int = '#,##0'
+    sub_font  = Font(bold=True, name="Calibri", size=11)
+    thin      = Side(style="thin", color="E2E8F0")
+    border    = Border(bottom=Side(style="thin", color="E2E8F0"))
 
-    def write_header(ws, headers, widths, fill=None):
-        f = fill or hdr_fill
+    def write_header(ws, headers, widths, fill=hdr_fill):
         for c, (h, w) in enumerate(zip(headers, widths), 1):
             cell = ws.cell(1, c, h)
-            cell.font = hdr_font; cell.fill = f; cell.alignment = hdr_align
+            cell.font = hdr_font; cell.fill = fill
+            cell.alignment = hdr_align
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
         ws.row_dimensions[1].height = 22
         ws.freeze_panes = "A2"
 
-    def set_align(cell, align="left"):
-        cell.alignment = Alignment(horizontal=align, vertical="center")
+    def align(ws, row, rights=(), centers=()):
+        for c in range(1, ws.max_column + 1):
+            cell = ws.cell(row, c)
+            if c in rights:   cell.alignment = Alignment(horizontal="right",  vertical="center")
+            elif c in centers: cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:              cell.alignment = Alignment(horizontal="left",   vertical="center")
 
-    # ══════════════════════════════════════════════════════
-    #  SHEET 1 — Full BOQ  (Aggregated across all shafts)
-    #  Columns: A=Sr, B=Code, C=Desc, D=Type, E=DN, F=Unit,
-    #           G=TotalQty, H=ListPrice, I=Disc%, J=NetRate(formula), K=Amount(formula), L=Shafts, M=Line
-    # ══════════════════════════════════════════════════════
+    # ══════════════════════════════════════════
+    # SHEET 1 — Full BOQ (Aggregated, All Shafts Combined)
+    # Same as the "All" tab in the app
+    # ══════════════════════════════════════════
     ws = wb.active
     ws.title = "Full BOQ"
     ws.sheet_view.showGridLines = False
 
-    hdrs = ["Sr.No","Item Code","Description","Type","DN","Unit",
-            "Total Qty","List Price (₹)","Disc %","Net Rate (₹)","Amount (₹)","Shafts / Location","Line"]
-    wids = [6, 22, 42, 14, 6, 5, 9, 14, 7, 14, 14, 28, 12]
-    write_header(ws, hdrs, wids)
+    agg_headers = ["Sr.No","Item Code","Description","Type","DN","Unit",
+                   "Total Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)","Shafts / Location","Line"]
+    agg_widths  = [6, 22, 42, 14, 6, 5, 9, 14, 7, 14, 14, 28, 12]
+    write_header(ws, agg_headers, agg_widths)
 
-    # Aggregate by item code (same as app "All" view)
+    # Aggregate by item code (same logic as app "All" view)
     agg = {}
     for b in boq:
         key = b["code"]
@@ -481,124 +485,84 @@ def export_excel():
                 agg[key]["shafts"].append(sh)
 
     agg_rows = list(agg.values())
-    last_data_row = len(agg_rows) + 1   # row index of last data row (1-based)
-    gt_row = last_data_row + 2           # grand total row
+    grand_total = sum(r["qty"] * net_rate(r) for r in agg_rows)
 
     for i, r in enumerate(agg_rows, 2):
-        disc_val  = eff_disc(r)
+        nr = net_rate(r)
+        a  = round(r["qty"] * nr, 2)
         shafts_str = ", ".join(sorted(r["shafts"]))
-        # Write raw values
-        ws.cell(i, 1, i-1);          set_align(ws.cell(i,1), "center")
-        ws.cell(i, 2, r["code"]);    set_align(ws.cell(i,2), "left")
-        ws.cell(i, 3, r["desc"]);    set_align(ws.cell(i,3), "left")
-        ws.cell(i, 4, r["sub"]);     set_align(ws.cell(i,4), "left")
-        ws.cell(i, 5, r["dn"] if r["dn"] else "-"); set_align(ws.cell(i,5), "center")
-        ws.cell(i, 6, "Nos");        set_align(ws.cell(i,6), "center")
-        # G = Total Qty
-        c_qty = ws.cell(i, 7, r["qty"])
-        c_qty.number_format = num_fmt_int
-        c_qty.font = Font(bold=True, color="1D4ED8", name="Calibri", size=11)
-        set_align(c_qty, "center")
-        # H = List Price
-        c_lp = ws.cell(i, 8, r["price"])
-        c_lp.number_format = num_fmt_inr; set_align(c_lp, "right")
-        # I = Disc%
-        c_d = ws.cell(i, 9, disc_val)
-        c_d.number_format = '0.00"%"'; set_align(c_d, "center")
-        # J = Net Rate  ← FORMULA
-        c_nr = ws.cell(i, 10, f"=H{i}*(1-I{i}/100)")
-        c_nr.number_format = num_fmt_inr; set_align(c_nr, "right")
-        c_nr.font = Font(color="10B981", name="Calibri", size=10, italic=True)
-        # K = Amount  ← FORMULA
-        c_amt = ws.cell(i, 11, f"=G{i}*J{i}")
-        c_amt.number_format = num_fmt_inr; set_align(c_amt, "right")
-        c_amt.font = Font(bold=True, name="Calibri", size=10)
-        # L = Shafts
-        c_sh = ws.cell(i, 12, shafts_str)
-        c_sh.fill = PatternFill("solid", fgColor="DBEAFE")
-        c_sh.font = Font(color="1D4ED8", name="Calibri", size=9); set_align(c_sh, "left")
-        # M = Line
-        ws.cell(i, 13, r["line"]); set_align(ws.cell(i,13), "left")
-        # Row border & alt fill
-        for c in range(1, 14):
-            ws.cell(i, c).border = row_border
+        row_data = [
+            i-1, r["code"], r["desc"], r["sub"],
+            r["dn"] if r["dn"] else "-", "Nos",
+            r["qty"], r["price"], eff_disc(r),
+            round(nr,2), a, shafts_str, r["line"]
+        ]
+        for c, v in enumerate(row_data, 1):
+            cell = ws.cell(i, c, v)
+            cell.border = border
+        align(ws, i, rights=(8,10,11), centers=(1,5,6,7,9))
+        # Highlight total qty column
+        qty_cell = ws.cell(i, 7)
+        qty_cell.font = Font(bold=True, color="1D4ED8", name="Calibri", size=11)
+        # Shade shafts column light blue
+        sh_cell = ws.cell(i, 12)
+        sh_cell.fill = PatternFill("solid", fgColor="DBEAFE")
+        sh_cell.font = Font(color="1D4ED8", name="Calibri", size=9)
         if i % 2 == 0:
-            for c in [1,2,3,4,5,6,8,9,10,11,13]:
-                ws.cell(i, c).fill = alt_fill
+            for c in range(1, len(row_data)+1):
+                if c not in (7, 12):  # keep highlights on qty/shaft cols
+                    ws.cell(i, c).fill = alt_fill
 
-    # ── Grand Total row (formulas) ──
+    # Grand total row
+    gt_row = len(agg_rows) + 2
     ws.cell(gt_row, 3, "GRAND TOTAL — ALL SHAFTS COMBINED").font = Font(bold=True, name="Calibri", size=11, color="0F172A")
-    # Total Qty formula
-    c_gqty = ws.cell(gt_row, 7, f"=SUM(G2:G{last_data_row})")
-    c_gqty.number_format = num_fmt_int
-    c_gqty.font = Font(bold=True, color="1D4ED8", name="Calibri", size=12)
-    set_align(c_gqty, "center")
-    # Grand Amount formula
-    c_ga = ws.cell(gt_row, 11, f"=SUM(K2:K{last_data_row})")
-    c_ga.number_format = num_fmt_inr
-    c_ga.font = tot_font; c_ga.fill = tot_fill; set_align(c_ga, "right")
-    ws.cell(gt_row, 12, f"{len(boq)} entries · {len(set(b.get('shaft','NA') for b in boq))} locations").font = Font(italic=True, color="64748B", name="Calibri", size=9)
+    ws.cell(gt_row, 7, sum(r["qty"] for r in agg_rows)).font = Font(bold=True, color="1D4ED8", name="Calibri", size=12)
+    ws.cell(gt_row, 7).alignment = Alignment(horizontal="center")
+    gt_cell = ws.cell(gt_row, 11, round(grand_total, 2))
+    gt_cell.font = tot_font; gt_cell.fill = tot_fill
+    gt_cell.alignment = Alignment(horizontal="right")
+    ws.cell(gt_row, 12, f"{len(boq)} entries across {len(set(b.get('shaft','NA') for b in boq))} locations").font = Font(italic=True, color="64748B", name="Calibri", size=9)
 
-    # ══════════════════════════════════════════════════════
-    #  SHEET 2 — Detail BOQ (every entry with shaft/row)
-    #  Columns: A=Sr, B=Location, C=Code, D=Desc, E=Type,
-    #           F=DN, G=Unit, H=Qty, I=ListPrice, J=Disc%,
-    #           K=NetRate(formula), L=Amount(formula), M=Line
-    # ══════════════════════════════════════════════════════
+    # ══════════════════════════════════════════
+    # SHEET 2 — Detail BOQ (every entry, with shaft per row)
+    # ══════════════════════════════════════════
     ws_det = wb.create_sheet("Detail BOQ")
     ws_det.sheet_view.showGridLines = False
-    det_hdrs = ["Sr.No","Location","Item Code","Description","Type","DN","Unit",
-                "Qty","List Price (₹)","Disc %","Net Rate (₹)","Amount (₹)","Line"]
-    det_wids = [6, 10, 22, 42, 14, 6, 5, 6, 14, 7, 14, 14, 12]
-    write_header(ws_det, det_hdrs, det_wids)
+    det_headers = ["Sr.No","Location","Item Code","Description","Type","DN","Unit",
+                   "Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)","Line"]
+    det_widths   = [6, 10, 22, 42, 14, 6, 5, 6, 14, 7, 14, 14, 12]
+    write_header(ws_det, det_headers, det_widths)
 
+    detail_total = 0
     for i, b in enumerate(boq, 2):
+        nd = eff_disc(b); nr = net_rate(b); a = round(amt(b), 2); detail_total += a
         fg_loc = "DBEAFE" if b.get("shaft","NA").startswith("SH") else "D1FAE5" if b.get("shaft","NA").startswith("K") else "F1F5F9"
-        fc_loc = "1D4ED8" if b.get("shaft","NA").startswith("SH") else "065F46" if b.get("shaft","NA").startswith("K") else "64748B"
-        ws_det.cell(i, 1, i-1);                     set_align(ws_det.cell(i,1), "center")
-        c_loc = ws_det.cell(i, 2, b.get("shaft","NA"))
-        c_loc.fill = PatternFill("solid", fgColor=fg_loc)
-        c_loc.font = Font(bold=True, name="Calibri", size=10, color=fc_loc); set_align(c_loc, "center")
-        ws_det.cell(i, 3, b["code"]);               set_align(ws_det.cell(i,3), "left")
-        ws_det.cell(i, 4, b["desc"]);               set_align(ws_det.cell(i,4), "left")
-        ws_det.cell(i, 5, b["sub"]);                set_align(ws_det.cell(i,5), "left")
-        ws_det.cell(i, 6, b["dn"] if b["dn"] else "-"); set_align(ws_det.cell(i,6), "center")
-        ws_det.cell(i, 7, "Nos");                   set_align(ws_det.cell(i,7), "center")
-        c_qty2 = ws_det.cell(i, 8, b["qty"])
-        c_qty2.number_format = num_fmt_int;          set_align(c_qty2, "center")
-        c_lp2 = ws_det.cell(i, 9, b["price"])
-        c_lp2.number_format = num_fmt_inr;           set_align(c_lp2, "right")
-        c_d2 = ws_det.cell(i, 10, eff_disc(b))
-        c_d2.number_format = '0.00"%"';              set_align(c_d2, "center")
-        # K = Net Rate ← FORMULA
-        c_nr2 = ws_det.cell(i, 11, f"=I{i}*(1-J{i}/100)")
-        c_nr2.number_format = num_fmt_inr;           set_align(c_nr2, "right")
-        c_nr2.font = Font(color="10B981", name="Calibri", size=10, italic=True)
-        # L = Amount ← FORMULA
-        c_a2 = ws_det.cell(i, 12, f"=H{i}*K{i}")
-        c_a2.number_format = num_fmt_inr;            set_align(c_a2, "right")
-        c_a2.font = Font(bold=True, name="Calibri", size=10)
-        ws_det.cell(i, 13, b["line"]);               set_align(ws_det.cell(i,13), "left")
-        for c in range(1, 14):
-            ws_det.cell(i, c).border = row_border
+        row_data = [i-1, b.get("shaft","NA"), b["code"], b["desc"], b["sub"],
+                    b["dn"] if b["dn"] else "-", "Nos", b["qty"],
+                    b["price"], nd, round(nr,2), a, b["line"]]
+        for c, v in enumerate(row_data, 1):
+            cell = ws_det.cell(i, c, v)
+            cell.border = border
+        align(ws_det, i, rights=(9,11,12), centers=(1,6,7,8,10))
+        ws_det.cell(i, 2).fill = PatternFill("solid", fgColor=fg_loc)
+        ws_det.cell(i, 2).font = Font(bold=True, name="Calibri", size=10,
+                                       color="1D4ED8" if b.get("shaft","NA").startswith("SH") else "065F46" if b.get("shaft","NA").startswith("K") else "64748B")
         if i % 2 == 0:
-            for c in [1,3,4,5,6,7,8,9,10,11,12,13]:
-                ws_det.cell(i, c).fill = alt_fill
+            for c in range(1, len(row_data)+1):
+                if c != 2: ws_det.cell(i, c).fill = alt_fill
 
-    det_last = len(boq) + 1; det_gt = det_last + 2
-    ws_det.cell(det_gt, 4, "GRAND TOTAL").font = Font(bold=True, name="Calibri", size=11)
-    c_ga2 = ws_det.cell(det_gt, 12, f"=SUM(L2:L{det_last})")
-    c_ga2.number_format = num_fmt_inr
-    c_ga2.font = tot_font; c_ga2.fill = tot_fill; set_align(c_ga2, "right")
+    dt_row = len(boq) + 2
+    ws_det.cell(dt_row, 4, "GRAND TOTAL").font = Font(bold=True, name="Calibri", size=11)
+    gt2 = ws_det.cell(dt_row, 12, round(detail_total, 2))
+    gt2.font = tot_font; gt2.fill = tot_fill; gt2.alignment = Alignment(horizontal="right")
 
-    # ══════════════════════════════════════════════════════
-    #  Per-shaft sheets
-    #  Columns: A=Sr, B=Code, C=Desc, D=Type, E=DN, F=Unit,
-    #           G=Qty, H=ListPrice, I=Disc%, J=NetRate(formula), K=Amount(formula)
-    # ══════════════════════════════════════════════════════
+    # ══════════════════════════════════════════
+    # Per-shaft sheets (unchanged logic, cleaner style)
+    # ══════════════════════════════════════════
     shaft_groups = {}
     for b in boq:
-        shaft_groups.setdefault(b.get("shaft","NA"), []).append(b)
+        sh = b.get("shaft", "NA")
+        shaft_groups.setdefault(sh, []).append(b)
 
     for sh, items in sorted(shaft_groups.items()):
         ws2 = wb.create_sheet(sh[:31])
@@ -606,50 +570,32 @@ def export_excel():
         fg_hex = "1D4ED8" if sh.startswith("SH") else "065F46" if sh.startswith("K") else "475569"
         sh_fill = PatternFill("solid", fgColor=fg_hex)
         sh_hdrs = ["Sr.No","Item Code","Description","Type","DN","Unit",
-                   "Qty","List Price (₹)","Disc %","Net Rate (₹)","Amount (₹)"]
-        sh_wids  = [6, 22, 42, 14, 6, 5, 6, 14, 7, 14, 14]
-        write_header(ws2, sh_hdrs, sh_wids, fill=sh_fill)
+                   "Qty","List Price (₹)","Disc%","Net Rate (₹)","Amount (₹)"]
+        sh_widths = [6,22,42,14,6,5,6,14,7,14,14]
+        write_header(ws2, sh_hdrs, sh_widths, fill=sh_fill)
 
+        subtotal = 0
         for i, b in enumerate(items, 2):
-            ws2.cell(i, 1, i-1);                       set_align(ws2.cell(i,1), "center")
-            ws2.cell(i, 2, b["code"]);                 set_align(ws2.cell(i,2), "left")
-            ws2.cell(i, 3, b["desc"]);                 set_align(ws2.cell(i,3), "left")
-            ws2.cell(i, 4, b["sub"]);                  set_align(ws2.cell(i,4), "left")
-            ws2.cell(i, 5, b["dn"] if b["dn"] else "-"); set_align(ws2.cell(i,5), "center")
-            ws2.cell(i, 6, "Nos");                     set_align(ws2.cell(i,6), "center")
-            c_q3 = ws2.cell(i, 7, b["qty"])
-            c_q3.number_format = num_fmt_int;           set_align(c_q3, "center")
-            c_l3 = ws2.cell(i, 8, b["price"])
-            c_l3.number_format = num_fmt_inr;           set_align(c_l3, "right")
-            c_d3 = ws2.cell(i, 9, eff_disc(b))
-            c_d3.number_format = '0.00"%"';             set_align(c_d3, "center")
-            # J = Net Rate ← FORMULA
-            c_nr3 = ws2.cell(i, 10, f"=H{i}*(1-I{i}/100)")
-            c_nr3.number_format = num_fmt_inr;          set_align(c_nr3, "right")
-            c_nr3.font = Font(color="10B981", name="Calibri", size=10, italic=True)
-            # K = Amount ← FORMULA
-            c_a3 = ws2.cell(i, 11, f"=G{i}*J{i}")
-            c_a3.number_format = num_fmt_inr;           set_align(c_a3, "right")
-            c_a3.font = Font(bold=True, name="Calibri", size=10)
-            for c in range(1, 12):
-                ws2.cell(i, c).border = row_border
+            nd = eff_disc(b); nr = net_rate(b); a = round(amt(b),2); subtotal += a
+            row_data = [i-1, b["code"], b["desc"], b["sub"],
+                        b["dn"] if b["dn"] else "-", "Nos",
+                        b["qty"], b["price"], nd, round(nr,2), a]
+            for c, v in enumerate(row_data, 1):
+                cell = ws2.cell(i, c, v); cell.border = border
+            align(ws2, i, rights=(8,10,11), centers=(1,5,6,7,9))
             if i % 2 == 0:
-                for c in range(1, 12):
+                for c in range(1, len(row_data)+1):
                     ws2.cell(i, c).fill = alt_fill
 
-        # Subtotal row with formulas
-        sub_last = len(items) + 1
-        sub_row  = sub_last + 2
-        ws2.cell(sub_row, 3, f"SUBTOTAL — {sh}").font = Font(bold=True, name="Calibri", size=11)
-        c_sq = ws2.cell(sub_row, 7, f"=SUM(G2:G{sub_last})")
-        c_sq.number_format = num_fmt_int
-        c_sq.font = Font(bold=True, color=fg_hex, name="Calibri", size=12)
-        set_align(c_sq, "center")
-        c_sa = ws2.cell(sub_row, 11, f"=SUM(K2:K{sub_last})")
-        c_sa.number_format = num_fmt_inr
-        c_sa.font = Font(bold=True, color=fg_hex, name="Calibri", size=13)
-        c_sa.fill  = PatternFill("solid", fgColor="F8FAFC")
-        set_align(c_sa, "right")
+        # Subtotal row
+        sub_row = len(items) + 2
+        ws2.cell(sub_row, 3, f"SUBTOTAL — {sh}").font = sub_font
+        st_cell = ws2.cell(sub_row, 11, round(subtotal, 2))
+        st_cell.font = Font(bold=True, color=fg_hex, name="Calibri", size=12)
+        st_cell.fill  = PatternFill("solid", fgColor="F8FAFC")
+        st_cell.alignment = Alignment(horizontal="right")
+        ws2.cell(sub_row, 7, sum(b["qty"] for b in items)).font = Font(bold=True, color=fg_hex, name="Calibri", size=11)
+        ws2.cell(sub_row, 7).alignment = Alignment(horizontal="center")
 
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
