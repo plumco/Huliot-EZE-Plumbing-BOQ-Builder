@@ -867,9 +867,10 @@ with tab_catalog:
                     dc=DN_COLORS.get(prod["dn"],"#64748B")
                     st.markdown(f"<div style='text-align:center;'><span style='background:{dc}18;color:{dc};padding:2px 7px;border-radius:10px;font-size:11px;font-weight:800;'>{prod['dn']}</span></div>",unsafe_allow_html=True)
             with c4:
-                _cc={"Pipe":"#1D4ED8","Bend":"#B45309","Branch":"#065F46","Trap":"#6D28D9","Coupler":"#0E7490","Reducer":"#3730A3","Inspection":"#92400E","Clamp":"#991B1B","Accessory":"#374151"}
-                _cb={"Pipe":"#DBEAFE","Bend":"#FEF3C7","Branch":"#D1FAE5","Trap":"#EDE9FE","Coupler":"#CFFAFE","Reducer":"#E0E7FF","Inspection":"#FEF3C7","Clamp":"#FEE2E2","Accessory":"#F3F4F6"}
-                cc=_cc.get(prod["type"],"#64748B"); ccb=_cb.get(prod["type"],"#F1F5F9")
+                from data_module import CATS as _CATS  # reuse color map
+                cc_colors={"Pipe":"#1D4ED8","Bend":"#B45309","Branch":"#065F46","Trap":"#6D28D9","Coupler":"#0E7490","Reducer":"#3730A3","Inspection":"#92400E","Clamp":"#991B1B","Accessory":"#374151"}
+                cc_bgs={"Pipe":"#DBEAFE","Bend":"#FEF3C7","Branch":"#D1FAE5","Trap":"#EDE9FE","Coupler":"#CFFAFE","Reducer":"#E0E7FF","Inspection":"#FEF3C7","Clamp":"#FEE2E2","Accessory":"#F3F4F6"}
+                cc=cc_colors.get(prod["type"],"#64748B"); ccb=cc_bgs.get(prod["type"],"#F1F5F9")
                 st.markdown(f"<div style='text-align:center;'><span style='background:{ccb};color:{cc};padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;'>{prod['type']}</span></div>",unsafe_allow_html=True)
             with c5:
                 st.markdown(f"<div style='text-align:right;font-weight:700;font-size:13px;color:#1E293B;padding:4px 4px;'>{fmt(prod['price'])}</div>",unsafe_allow_html=True)
